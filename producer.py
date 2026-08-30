@@ -1,4 +1,8 @@
+import io
+import json
+
 from confluent_kafka import Producer
+from fastavro import parse_schema, schemaless_writer
 
 TOPIC = "orders.received.v1"
 
@@ -15,23 +19,54 @@ def delivery_report(err, msg):
         print(f"Offset: {msg.offset()}")
 
 
-# Kafka producer configuration
-producer_config = {
+# -------------------------
+# Load Avro schema
+# -------------------------
+
+with open("schemas/order.avsc", "r") as schema_file:
+    schema = json.load(schema_file)
+
+parsed_schema = parse_schema(schema)
+
+# -------------------------
+# Create Kafka Producer
+# -------------------------
+
+producer = Producer({
     "bootstrap.servers": "localhost:9092"
+})
+
+# -------------------------
+# Create Order
+# -------------------------
+
+order = {
+    "orderId": "1001",
+    "product": "Laptop",
+    "price": 1250.50
 }
 
-producer = Producer(producer_config)
+# -------------------------
+# Serialize Order using Avro
+# -------------------------
 
+buffer = io.BytesIO()
 
-# Simple Kafka record
-order_id = "1001"
-order_message = "Order-1001"
+schemaless_writer(
+    buffer,
+    parsed_schema,
+    order
+)
 
+avro_bytes = buffer.getvalue()
 
+# -------------------------
+# Send Avro bytes to Kafka
+# -------------------------
 producer.produce(
     topic=TOPIC,
-    key=order_id,
-    value=order_message,
+    key=order["orderId"],
+    value=avro_bytes,
     callback=delivery_report
 )
 
