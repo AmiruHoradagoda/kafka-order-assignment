@@ -8,23 +8,15 @@ from fastavro import parse_schema, schemaless_reader
 TOPIC = "orders.received.v1"
 
 
-# -------------------------
-# Load Avro schema
-# -------------------------
-
 with open("schemas/order.avsc", "r") as schema_file:
     schema = json.load(schema_file)
 
 parsed_schema = parse_schema(schema)
 
 
-# -------------------------
-# Create Kafka Consumer
-# -------------------------
-
 consumer = Consumer({
     "bootstrap.servers": "localhost:9092",
-    "group.id": "order-avro-processing-group",
+    "group.id": "order-aggregation-group",
     "auto.offset.reset": "earliest"
 })
 
@@ -32,6 +24,10 @@ consumer = Consumer({
 consumer.subscribe([TOPIC])
 
 print("Waiting for Avro orders...")
+
+
+total_price = 0.0
+order_count = 0
 
 
 try:
@@ -48,10 +44,6 @@ try:
             continue
 
 
-        # -------------------------
-        # Deserialize Avro bytes
-        # -------------------------
-
         buffer = io.BytesIO(message.value())
 
         order = schemaless_reader(
@@ -59,10 +51,6 @@ try:
             parsed_schema
         )
 
-
-        # -------------------------
-        # Decode Kafka key
-        # -------------------------
 
         key = (
             message.key().decode("utf-8")
@@ -72,7 +60,18 @@ try:
 
 
         # -------------------------
-        # Print Order
+        # Running aggregation
+        # -------------------------
+
+        total_price += order["price"]
+
+        order_count += 1
+
+        running_average = total_price / order_count
+
+
+        # -------------------------
+        # Print result
         # -------------------------
 
         print("\nReceived Order")
@@ -80,12 +79,20 @@ try:
         print(f"Key: {key}")
         print(f"Order ID: {order['orderId']}")
         print(f"Product: {order['product']}")
-        print(f"Price: {order['price']}")
+        print(f"Price: {order['price']:.2f}")
+
+        print()
+
+        print(f"Orders Processed: {order_count}")
+        print(f"Total Price: {total_price:.2f}")
+        print(f"Running Average: {running_average:.2f}")
+
+        print()
 
         print(f"Partition: {message.partition()}")
         print(f"Offset: {message.offset()}")
 
-        print("------------------------")
+        print("-----------------------------")
 
 
 except KeyboardInterrupt:

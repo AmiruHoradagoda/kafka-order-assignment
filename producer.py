@@ -1,75 +1,81 @@
 import io
 import json
+import random
+import time
 
 from confluent_kafka import Producer
 from fastavro import parse_schema, schemaless_writer
 
+
 TOPIC = "orders.received.v1"
 
 
-# This function is called when Kafka confirms
-# whether the message was delivered or failed.
 def delivery_report(err, msg):
     if err is not None:
         print(f"Delivery failed: {err}")
     else:
-        print("Message delivered successfully")
-        print(f"Topic: {msg.topic()}")
-        print(f"Partition: {msg.partition()}")
-        print(f"Offset: {msg.offset()}")
+        print(
+            f"Delivered -> "
+            f"partition={msg.partition()}, "
+            f"offset={msg.offset()}"
+        )
 
-
-# -------------------------
-# Load Avro schema
-# -------------------------
 
 with open("schemas/order.avsc", "r") as schema_file:
     schema = json.load(schema_file)
 
 parsed_schema = parse_schema(schema)
 
-# -------------------------
-# Create Kafka Producer
-# -------------------------
 
 producer = Producer({
     "bootstrap.servers": "localhost:9092"
 })
 
-# -------------------------
-# Create Order
-# -------------------------
 
-order = {
-    "orderId": "1001",
-    "product": "Laptop",
-    "price": 1250.50
-}
-
-# -------------------------
-# Serialize Order using Avro
-# -------------------------
-
-buffer = io.BytesIO()
-
-schemaless_writer(
-    buffer,
-    parsed_schema,
-    order
-)
-
-avro_bytes = buffer.getvalue()
-
-# -------------------------
-# Send Avro bytes to Kafka
-# -------------------------
-producer.produce(
-    topic=TOPIC,
-    key=order["orderId"],
-    value=avro_bytes,
-    callback=delivery_report
-)
+products = [
+    "Laptop",
+    "Phone",
+    "Keyboard",
+    "Mouse",
+    "Monitor"
+]
 
 
-# Wait until all pending messages are delivered
+for i in range(1, 11):
+
+    order = {
+        "orderId": str(1000 + i),
+        "product": random.choice(products),
+        "price": round(random.uniform(50.0, 1500.0), 2)
+    }
+
+    buffer = io.BytesIO()
+
+    schemaless_writer(
+        buffer,
+        parsed_schema,
+        order
+    )
+
+    avro_bytes = buffer.getvalue()
+
+    producer.produce(
+        topic=TOPIC,
+        key=order["orderId"].encode("utf-8"),
+        value=avro_bytes,
+        callback=delivery_report
+    )
+
+    print(
+        f"Sent -> "
+        f"{order['orderId']} | "
+        f"{order['product']} | "
+        f"{order['price']}"
+    )
+
+    producer.poll(0)
+
+    time.sleep(1)
+
+
 producer.flush()
