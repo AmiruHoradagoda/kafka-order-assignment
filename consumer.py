@@ -191,6 +191,14 @@ try:
                 print(f"Total Price: {total_price:.2f}")
                 print(f"Running Average: {running_average:.2f}")
 
+                # Processing completed successfully
+                consumer.commit(
+                    message=message,
+                    asynchronous=False
+                )
+
+                print("Offset committed")
+
                 print()
             else:
                 print(
@@ -206,12 +214,22 @@ try:
                         "Maximum retry attempts exhausted"
                     )
                 )
+                consumer.commit(
+                    message=message,
+                    asynchronous=False
+                )
+                print("DLQ message handled and offset committed")
         except PermanentProcessingError as error:
             send_to_dlq(
-            message,
-            order,
-            error
-        )
+                message,
+                order,
+                error
+            )
+            consumer.commit(
+                message=message,
+                asynchronous=False
+            )
+            print("DLQ message handled and offset committed")
 
         print(f"Partition: {message.partition()}")
         print(f"Offset: {message.offset()}")
