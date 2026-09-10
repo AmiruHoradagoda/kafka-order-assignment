@@ -6,24 +6,38 @@ from pprint import pprint
 from confluent_kafka import Consumer, Producer
 from fastavro import parse_schema, schemaless_reader
 from exceptions import PermanentProcessingError, TemporaryProcessingError
+from utils.avro_utils import (
+    load_schema,
+    deserialize_avro
+)
+from utils.config_loader import load_config
 
-TOPIC = "orders.received.v1"
-DLQ_TOPIC = "orders.dlq.v1"
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 2
+config = load_config()
 
-with open("schemas/order.avsc", "r") as schema_file:
-    schema = json.load(schema_file)
+KAFKA_BOOTSTRAP_SERVERS = config["kafka"]["bootstrap_servers"]
+
+ORDERS_TOPIC = config["kafka"]["topics"]["orders"]
+DLQ_TOPIC = config["kafka"]["topics"]["dlq"]
+
+ORDER_CONSUMER_GROUP = config["kafka"]["consumer_groups"]["orders"]
+
+MAX_RETRIES = config["retry"]["max_retries"]
+RETRY_DELAY_SECONDS = config["retry"]["delay_seconds"]
+
+ORDER_SCHEMA_PATH = config["avro"]["order_schema_path"]
+
+schema = load_schema(
+    "schemas/order.avsc"
+)
 
 parsed_schema = parse_schema(schema)
 
 
 consumer = Consumer({
-    "bootstrap.servers": "localhost:9092",
-    "group.id": "order-aggregation-group",
+    "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
+    "group.id": ORDER_CONSUMER_GROUP,
     "auto.offset.reset": "earliest",
     "enable.auto.commit": False
-
 })
 
 dlq_producer = Producer({
@@ -140,11 +154,9 @@ try:
         # Avro deserialization
         # -------------------------
 
-        buffer = io.BytesIO(message.value())
-
-        order = schemaless_reader(
-            buffer,
-            parsed_schema
+        order = deserialize_avro(
+            message.value(),
+            schema
         )
 
         # -------------------------

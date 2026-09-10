@@ -5,10 +5,20 @@ import time
 
 from confluent_kafka import Producer
 from fastavro import parse_schema, schemaless_writer
+from utils.avro_utils import (
+    load_schema,
+    serialize_avro
+)
+from utils.config_loader import load_config
 
+KAFKA_BOOTSTRAP_SERVERS = config["kafka"]["bootstrap_servers"]
+ORDERS_TOPIC = config["kafka"]["topics"]["orders"]
+ORDER_SCHEMA_PATH = config["avro"]["order_schema_path"]
 
-TOPIC = "orders.received.v1"
-
+config = load_config()
+schema = load_schema(
+    "schemas/order.avsc"
+)
 
 def delivery_report(err, msg):
     if err is not None:
@@ -21,14 +31,11 @@ def delivery_report(err, msg):
         )
 
 
-with open("schemas/order.avsc", "r") as schema_file:
-    schema = json.load(schema_file)
-
 parsed_schema = parse_schema(schema)
 
 
 producer = Producer({
-    "bootstrap.servers": "localhost:9092"
+    "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS
 })
 
 
@@ -49,15 +56,7 @@ for i in range(1, 11):
         "price": round(random.uniform(50.0, 1500.0), 2)
     }
 
-    buffer = io.BytesIO()
-
-    schemaless_writer(
-        buffer,
-        parsed_schema,
-        order
-    )
-
-    avro_bytes = buffer.getvalue()
+    avro_bytes = serialize_avro(order,schema)
 
     producer.produce(
         topic=TOPIC,

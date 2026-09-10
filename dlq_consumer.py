@@ -3,13 +3,19 @@ import json
 
 from confluent_kafka import Consumer
 from fastavro import parse_schema, schemaless_reader
+from utils.config_loader import load_config
+from utils.avro_utils import (
+    load_schema,
+    deserialize_avro
+)
+config = load_config()
+
+DLQ_TOPIC = config["topics"]["dlq"]
 
 
-DLQ_TOPIC = "orders.dlq.v1"
-
-
-with open("schemas/order.avsc", "r") as schema_file:
-    schema = json.load(schema_file)
+schema = load_schema(
+    "schemas/order.avsc"
+)
 
 parsed_schema = parse_schema(schema)
 
@@ -38,11 +44,9 @@ try:
             print(f"Consumer error: {message.error()}")
             continue
 
-        buffer = io.BytesIO(message.value())
-
-        order = schemaless_reader(
-            buffer,
-            parsed_schema
+        order = deserialize_avro(
+            message.value(),
+            schema
         )
 
         key = (

@@ -1,0 +1,17 @@
+kafka:
+  bootstrap_servers: "localhost:9092"
+
+  topics:
+    orders: "orders.received.v1"
+    dlq: "orders.dlq.v1"
+
+  consumer_groups:
+    orders: "order-aggregation-group"
+    dlq: "dlq-monitor-group"
+
+retry:
+  max_retries: 3
+  delay_seconds: 2
+
+avro:
+  order_schema_path: "schemas/order.avsc"
