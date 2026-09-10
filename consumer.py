@@ -128,7 +128,7 @@ def send_to_dlq(message, order, error):
         f"sent to {DLQ_TOPIC}"
     )
     
-consumer.subscribe([TOPIC])
+consumer.subscribe([ORDERS_TOPIC])
 
 print("Waiting for Avro orders...")
 

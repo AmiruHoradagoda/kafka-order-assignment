@@ -1,5 +1,3 @@
-import io
-import json
 import random
 import time
 
@@ -10,6 +8,8 @@ from utils.avro_utils import (
     serialize_avro
 )
 from utils.config_loader import load_config
+
+config = load_config()
 
 KAFKA_BOOTSTRAP_SERVERS = config["kafka"]["bootstrap_servers"]
 ORDERS_TOPIC = config["kafka"]["topics"]["orders"]
@@ -59,7 +59,7 @@ for i in range(1, 11):
     avro_bytes = serialize_avro(order,schema)
 
     producer.produce(
-        topic=TOPIC,
+        topic=ORDERS_TOPIC,
         key=order["orderId"].encode("utf-8"),
         value=avro_bytes,
         callback=delivery_report
