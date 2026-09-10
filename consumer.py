@@ -21,7 +21,9 @@ parsed_schema = parse_schema(schema)
 consumer = Consumer({
     "bootstrap.servers": "localhost:9092",
     "group.id": "order-aggregation-group",
-    "auto.offset.reset": "earliest"
+    "auto.offset.reset": "earliest",
+    "enable.auto.commit": False
+
 })
 
 dlq_producer = Producer({
