@@ -1,6 +1,3 @@
-import io
-import json
-
 from confluent_kafka import Consumer
 from fastavro import parse_schema, schemaless_reader
 from utils.config_loader import load_config
@@ -10,7 +7,7 @@ from utils.avro_utils import (
 )
 config = load_config()
 
-DLQ_TOPIC = config["topics"]["dlq"]
+DLQ_TOPIC = config["kafka"]["topics"]["dlq"]
 
 
 schema = load_schema(

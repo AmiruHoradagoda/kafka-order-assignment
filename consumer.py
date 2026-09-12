@@ -11,6 +11,7 @@ from utils.avro_utils import (
     deserialize_avro
 )
 from utils.config_loader import load_config
+from utils.validation_utils import validate_order
 
 config = load_config()
 
@@ -46,18 +47,15 @@ dlq_producer = Producer({
 
 #make order 1003 failed 2 times
 temporary_failures_remaining = {
-    "1003": 2
+    "1003": 5
 }
 
 def process_order(order):
 
     order_id = order["orderId"]
 
-    # Permanent failure simulation
-    if order_id == "1004":
-        raise PermanentProcessingError(
-            "Simulated permanent validation failure"
-        )
+    # Permanent validation errors
+    validate_order(order)
 
     # Temporary failure simulation
     if (

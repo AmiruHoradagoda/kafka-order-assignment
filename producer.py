@@ -50,11 +50,20 @@ products = [
 
 for i in range(1, 11):
 
-    order = {
-        "orderId": str(1000 + i),
-        "product": random.choice(products),
-        "price": round(random.uniform(50.0, 1500.0), 2)
-    }
+    if i == 4:
+        # Simulate a permanent business-validation failure
+        order = {
+            "orderId": "1004",
+            "product": random.choice(products),
+            "price": -50.0
+        }
+
+    else:
+        order = {
+            "orderId": str(1000 + i),
+            "product": random.choice(products),
+            "price": round(random.uniform(50.0, 1500.0), 2)
+        }
 
     avro_bytes = serialize_avro(order,schema)
 

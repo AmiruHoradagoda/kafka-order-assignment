@@ -1,297 +1,172 @@
-# Kafka Order Assignment
+﻿# Resilient Kafka Order Processing Pipeline
 
-This is a beginner Kafka project for one simple flow:
+A Kafka-based event-driven order processing system demonstrating reliable message processing, Avro serialization, real-time aggregation, retry handling, Dead Letter Queue processing, and explicit offset management.
 
-```text
-Python Producer
-      |
-      | serialize/send
-      v
-orders.received.v1
-    Kafka Topic
-      |
-      | poll
-      v
-Python Consumer
+## Overview
+
+Orders are produced as Avro events and transported through Apache Kafka to a Python consumer. Successfully processed orders contribute to a running count, total price, and average price. Temporary processing failures are retried; permanent validation failures and exhausted retries route the original event to a Dead Letter Queue (DLQ).
+
+The order consumer explicitly commits offsets after updating the aggregation or completing its DLQ forwarding routine. A separate consumer reads and displays failed orders for inspection. This is a hands-on engineering project exploring resilience in a small event-driven data processing system, with implementation boundaries described below.
+
+## What This Project Demonstrates
+
+Consuming a message is only one part of an event-driven system. A consumer also needs to decide what constitutes success, which failures can recover, where failed events go, and when processing progress should be recorded.
+
+- **Structured serialization:** a shared Avro schema defines the order payload.
+- **Asynchronous communication:** a producer publishes keyed events independently of consumers.
+- **Consumer processing:** business validation separates acceptable orders from permanent failures.
+- **Failure handling and retry strategies:** temporary errors receive bounded attempts with a fixed delay.
+- **Dead Letter Queues:** failed records are forwarded to a separate topic for inspection.
+- **Offset management:** the main consumer uses synchronous, explicit commits after processing decisions.
+- **Real-time aggregation:** each successful order updates an in-memory count, total, and running average.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    P[Order Producer] -->|Avro events keyed by orderId| K[(orders.received.v1)]
+    K --> C[Order Consumer]
+    C -->|Success| A[Running Aggregation]
+    C -->|Temporary failure| R[Bounded Retry Logic]
+    R -->|Retry success| A
+    C -->|Permanent validation failure| F[DLQ Forwarding]
+    R -->|Attempts exhausted| F
+    F -->|Original key and Avro payload| D[(orders.dlq.v1)]
+    D --> DC[DLQ Consumer: inspect and display]
+    A --> O[Commit source offset]
+    F -->|After produce and flush return| O
 ```
 
-This stage intentionally uses plain strings only:
+Retries run inside the order consumer; there is no separate retry topic or worker. The source offset commit does not wait for the DLQ consumer to read the record. DLQ publication and source offset commits are separate operations, not an atomic transaction.
 
-```text
-Topic: orders.received.v1
-Key: 1001
-Value: Order-1001
+## Components and Event Contract
+
+| Component | Responsibility |
+| --- | --- |
+| [`producer.py`](producer.py) | Publishes ten sample orders, keyed by order ID, with delivery callbacks. |
+| [`consumer.py`](consumer.py) | Deserializes, validates, retries, aggregates, forwards failures, and commits source offsets. |
+| [`dlq_consumer.py`](dlq_consumer.py) | Deserializes and prints failed orders with Kafka partition and offset metadata. |
+| [`schemas/order.avsc`](schemas/order.avsc) | Defines the shared Avro `Order` record. |
+| [`utils/`](utils/) | Provides Avro serialization, YAML configuration loading, and business validation. |
+| [`exceptions.py`](exceptions.py) | Distinguishes temporary and permanent processing errors. |
+| [`config/config.yaml`](config/config.yaml) | Holds topic names, consumer groups, broker address, and retry settings. |
+| [`docker-compose.yml`](docker-compose.yml) | Starts Kafka and initializes both topics after the broker is healthy. |
+
+| Field | Avro type | Business rule |
+| --- | --- | --- |
+| `orderId` | `string` | Must not be empty; also used as the UTF-8 Kafka key. |
+| `product` | `string` | Must not be empty. |
+| `price` | `float` | Must be greater than zero. |
+
+Example payload before serialization:
+
+```json
+{"orderId": "1001", "product": "Laptop", "price": 899.99}
 ```
 
-No Avro, Schema Registry, retry logic, DLQ, running averages, databases, FastAPI, or other advanced features are included yet.
+The applications use `fastavro` schemaless binary encoding with a local schema file. There is no Schema Registry. DLQ records preserve the original key and Avro value; they do not include an error envelope or retry metadata.
 
-## Requirements
+## Processing and Failure Behavior
 
-- Python 3.12+
-- Docker Desktop or Docker Engine with Docker Compose
-- `uv`
+The consumer validates each decoded order before applying the temporary failure simulation. Permanent validation errors bypass retries. Temporary errors are retried with a fixed two-second delay between attempts.
 
-## 1. Install `uv` If Needed
+Although the configuration key is named `max_retries`, the loop treats its default value of `3` as **three total attempts**, including the first attempt.
 
-Follow the official install instructions:
+For one producer run against empty topics with a newly started order consumer:
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+| Orders | Behavior | Result |
+| --- | --- | --- |
+| `1001`, `1002`, `1005`–`1010` | Valid orders with no simulated failure. | Eight orders contribute to the aggregation. |
+| `1003` | Configured to fail temporarily five times; only three attempts are available. | Forwarded to the DLQ after retry exhaustion. |
+| `1004` | Produced with a price of `-50.0`. | Forwarded directly to the DLQ after validation. |
+
+Products and valid prices are randomized, so totals vary. The consumer prints the processed count, total price, running average, partition, offset, and commit messages. The DLQ consumer should display orders `1003` and `1004` under these conditions.
+
+To explore retry recovery, change `temporary_failures_remaining["1003"]` in `consumer.py` from `5` to `2` before starting the consumer: the third attempt will succeed. The failure counter lives in memory and resets on consumer restart. Repeated producer runs reuse order IDs, and the consumer does not deduplicate them, so later runs in the same consumer process can behave differently.
+
+## Run Locally
+
+Requirements: Python 3.12 or newer, `uv`, and Docker with Docker Compose. Run all commands from the repository root so relative configuration and schema paths resolve correctly.
+
+### 1. Install dependencies
+
+```sh
+uv sync --locked
 ```
 
-Check it:
+The Python dependencies are `confluent-kafka`, `fastavro`, and `PyYAML`. The resolved environment is recorded in `uv.lock`; `requirements.txt` also provides pinned dependencies for pip-based environments.
 
-```powershell
-uv --version
-```
+### 2. Start Kafka and initialize topics
 
-## 2. Initialize Or Sync Dependencies
-
-If this project has already been created, run:
-
-```powershell
-uv sync
-```
-
-The dependency used by the Python code is:
-
-```powershell
-uv add confluent-kafka
-```
-
-Do not use `pip install` for this project.
-
-## 3. Start Kafka
-
-From the `kafka-order-assignment` folder:
-
-```powershell
+```sh
 docker compose up -d
+docker compose ps -a
+docker compose logs kafka-init
 ```
 
-This starts one local Apache Kafka broker in KRaft mode. ZooKeeper is not used.
+Compose starts Apache Kafka 4.0.0 as a single broker/controller in KRaft mode, without ZooKeeper. The `kafka-init` service waits for broker health, then creates `orders.received.v1` and `orders.dlq.v1`, each with one partition and replication factor one. The initialization container is expected to exit after finishing.
 
-## 4. Check The Kafka Container
+Verify both topics exist before running the applications:
 
-```powershell
-docker ps
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
-You should see a container named:
+### 3. Start the consumers in separate terminals
 
-```text
-kafka-order-assignment
+Order processor:
+
+```sh
+uv run --locked consumer.py
 ```
 
-## 5. Create The Topic
+DLQ monitor:
 
-Create the topic manually after Kafka starts:
-
-```powershell
-docker exec -it kafka-order-assignment /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic orders.received.v1 --partitions 1 --replication-factor 1
+```sh
+uv run --locked dlq_consumer.py
 ```
 
-This creates:
+### 4. Publish sample orders
 
-- Topic: `orders.received.v1`
-- Partitions: `1`
-- Replication factor: `1`
+In a third terminal:
 
-## 6. List Kafka Topics
-
-```powershell
-docker exec -it kafka-order-assignment /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```sh
+uv run --locked producer.py
 ```
 
-You should see:
+The producer sends ten orders approximately one second apart, then flushes pending deliveries and exits. Compare the consumer output with the failure behavior table above. Both consumers keep polling until interrupted with `Ctrl+C`.
 
-```text
-orders.received.v1
-```
+### 5. Stop the environment
 
-## 7. Start The Consumer
-
-Keep this terminal open:
-
-```powershell
-uv run consumer.py
-```
-
-The consumer waits for messages from Kafka.
-
-## 8. Open Another Terminal
-
-Open a second terminal and go to the same folder:
-
-```powershell
-cd kafka-order-assignment
-```
-
-## 9. Run The Producer
-
-```powershell
-uv run producer.py
-```
-
-The producer sends one message:
-
-```text
-Topic: orders.received.v1
-Key: 1001
-Value: Order-1001
-```
-
-## 10. Observe The Consumer Output
-
-The first terminal should print something similar to:
-
-```text
-Received Order
-Key: 1001
-Value: Order-1001
-Partition: 0
-Offset: 0
-------------------------
-```
-
-Run the producer again:
-
-```powershell
-uv run producer.py
-```
-
-Each new message is appended to the topic partition, so the offset should increase:
-
-```text
-Offset: 1
-Offset: 2
-Offset: 3
-```
-
-## 11. Stop Kafka When Finished
-
-```powershell
+```sh
 docker compose down
 ```
 
-## Useful Docker Commands
+Compose does not configure a persistent Kafka data volume. Treat this as a disposable local environment; do not rely on topic data surviving container removal.
 
-Check running containers:
+## Configuration and Offset Management
 
-```powershell
-docker ps
-```
+| Setting | Default | Usage |
+| --- | --- | --- |
+| Broker | `localhost:9092` | Host access for Python applications; Compose initialization uses `kafka:29092`. |
+| Orders topic | `orders.received.v1` | Producer output and order consumer input. |
+| DLQ topic | `orders.dlq.v1` | Failed order output and DLQ monitor input. |
+| Order consumer group | `order-aggregation-group` | Tracks source processing progress. |
+| DLQ consumer group | `dlq-monitor-group` | Tracks inspection progress independently. |
+| `retry.max_retries` | `3` | Total processing attempts per order. |
+| `retry.delay_seconds` | `2` | Fixed delay between temporary failure attempts. |
 
-Check all containers:
+Configuration is partially centralized: the DLQ producer and DLQ consumer still hard-code `localhost:9092`, the DLQ consumer hard-codes its group, and all three scripts use `schemas/order.avsc` directly. Changing the corresponding YAML values alone will not update those paths. Topic changes also require updating Compose initialization.
 
-```powershell
-docker ps -a
-```
+The order consumer disables automatic commits and calls `commit(message=message, asynchronous=False)` after either successful aggregation or DLQ forwarding. The DLQ monitor uses the client's default automatic commit behavior.
 
-View Kafka logs:
+Both consumers set `auto.offset.reset` to `earliest`. This applies when there is no valid committed offset; restarting an existing group normally resumes from its committed progress rather than replaying all records. Aggregation state starts from zero on every process start, independently of the group's stored offsets.
 
-```powershell
-docker logs kafka-order-assignment
-```
+## Design Boundaries
 
-List Kafka topics:
-
-```powershell
-docker exec -it kafka-order-assignment /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
-```
-
-Stop containers:
-
-```powershell
-docker compose down
-```
-
-## Kafka Concepts In This Project
-
-### Producer
-
-A Kafka Producer is an application that sends records to Kafka. In this project, `producer.py` sends one order message.
-
-### Consumer
-
-A Kafka Consumer is an application that reads records from Kafka. In this project, `consumer.py` continuously polls Kafka and prints received orders.
-
-### Topic
-
-A topic is a named stream of records. This project uses one topic:
-
-```text
-orders.received.v1
-```
-
-### Message Key And Value
-
-The key is metadata Kafka can use to choose a partition. This project uses:
-
-```text
-Key: 1001
-```
-
-The value is the actual message payload. This project uses:
-
-```text
-Value: Order-1001
-```
-
-### `bootstrap.servers`
-
-`bootstrap.servers` is the Kafka broker address the Python client connects to first. This project uses:
-
-```text
-localhost:9092
-```
-
-### `produce()`
-
-`produce()` queues a message to be sent by the producer to a Kafka topic.
-
-### `flush()`
-
-`flush()` waits for queued producer messages to finish sending before the Python program exits. Without it, a short script might end before the message is delivered.
-
-### `subscribe()`
-
-`subscribe()` tells the consumer which Kafka topic or topics it wants to read from.
-
-### `poll()`
-
-`poll()` asks Kafka for the next available message. If no message is available before the timeout, it returns `None`.
-
-### Consumer Group
-
-A consumer group is a named group of consumers that work together. Kafka tracks offsets for the group. This project uses:
-
-```text
-order-processing-group
-```
-
-### Partition
-
-A partition is an ordered log inside a topic. This project creates one partition, so all messages go to partition `0`.
-
-### Offset
-
-An offset is the position of a message inside a partition. When you run the producer multiple times, Kafka appends new messages and the offsets increase.
-
-## Later Evolution
-
-This simple string-based version can later evolve into:
-
-```text
-Python Order Object
-      ↓
-Avro Serialization
-      ↓
-Kafka
-      ↓
-Avro Deserialization
-      ↓
-Consumer
-```
-
-At that later stage, the producer will convert a Python order object into Avro bytes before sending it to Kafka, and the consumer will convert Avro bytes back into a Python-friendly structure after reading from Kafka.
+- **Delivery guarantees:** DLQ forwarding calls `produce()` and `flush()`, but does not check delivery callbacks or the flush result. Successful DLQ delivery is not verified before committing the source offset. There are no Kafka transactions or exactly-once guarantees, and reprocessing can produce duplicates.
+- **Aggregation scope:** count, total, and average are held only in the consumer process. They are not persisted, shared across consumers, or calculated in time windows. Avro `float` prices also have binary floating-point precision limits.
+- **Failure coverage:** retries cover the explicitly raised temporary processing error; permanent business validation errors go directly to the DLQ. Malformed Avro payloads and unexpected exceptions are not covered by this routing and can stop the consumer.
+- **Retry throughput:** sleeping between attempts blocks the consumer loop. This keeps the flow easy to inspect but delays subsequent records during failures.
+- **DLQ operations:** the monitor displays failed records; automated replay, remediation, and enriched failure metadata are not implemented.
+- **Deployment scope:** a single local broker, plaintext listeners, and console output support a hands-on demonstration. High availability, authentication, durable application state, and operational monitoring would require further work before production use.

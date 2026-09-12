@@ -1,10 +1,11 @@
 [project]
 name = "kafka-order-assignment"
 version = "0.1.0"
-description = "Basic Python Kafka producer and consumer assignment"
+description = "Resilient Kafka Order Processing Pipeline with Avro, retries, DLQ routing, and running aggregation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "confluent-kafka>=2.15.0",
     "fastavro>=1.12.2",
+    "PyYAML>=6.0.3",
 ]
